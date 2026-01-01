@@ -58,19 +58,23 @@ pub async fn process_build(
     extract_installer(&build_binary_path, &extract_dir)?;
     info!("Extraction complete");
 
+    update_progress(progress, 30, "Extracting nested archives...");
+    info!("[3] Extracting nested archives (if any)");
+
+    // NSIS installers often have nested 7z archives (e.g., app-64.7z)
+    extract_nested_archives(&extract_dir)?;
+    info!("Nested archive extraction complete");
+
     update_progress(progress, 35, "Locating and extracting app.asar...");
-    info!("[3] Finding and extracting app.asar");
+    info!("[4] Finding and extracting app.asar");
 
-    let app_asar_path = extract_dir.join("resources").join("app.asar");
-    let app_icon_path = extract_dir
-        .join("resources")
-        .join("assets")
-        .join("icon.ico");
-
-    if !app_asar_path.exists() {
-        anyhow::bail!("app.asar not found at {:?}", app_asar_path);
-    }
+    // Search for app.asar recursively since installer structure varies
+    let app_asar_path = find_app_asar(&extract_dir)?;
     info!("Found app.asar at {:?}", app_asar_path);
+
+    // Try to find icon in same resources folder as app.asar
+    let resources_dir = app_asar_path.parent().unwrap_or(&extract_dir);
+    let app_icon_path = resources_dir.join("assets").join("icon.ico");
 
     // Copy icon if it exists
     if app_icon_path.exists() {
@@ -83,31 +87,31 @@ pub async fn process_build(
     info!("Extracted app.asar");
 
     update_progress(progress, 45, "Cleaning up temp files...");
-    info!("[4] Cleaning up temporary files");
+    info!("[5] Cleaning up temporary files");
 
     fs::remove_dir_all(&temp_dir)?;
     info!("Cleanup complete");
 
     update_progress(progress, 50, "Copying sources...");
-    info!("[5] Copying sources before modding");
+    info!("[6] Copying sources before modding");
 
     copy_dir_all(&build_source_dir, &build_modded_dir)?;
     info!("Copy complete");
 
     update_progress(progress, 55, "Applying patches...");
-    info!("[6] Patching application");
+    info!("[7] Patching application");
 
     apply_patches(&build_modded_dir, auto_devtools)?;
     info!("Patching complete");
 
     update_progress(progress, 80, "Creating mod files...");
-    info!("[7] Creating mod files");
+    info!("[8] Creating mod files");
 
     create_mod_files(&build_modded_dir)?;
     info!("Mod files created");
 
     update_progress(progress, 90, "Injecting mod into HTML...");
-    info!("[8] Injecting mod into HTML files");
+    info!("[9] Injecting mod into HTML files");
 
     inject_mod_into_html(&build_modded_dir)?;
     info!("HTML injection complete");
@@ -198,6 +202,109 @@ fn find_7z_executable() -> Option<PathBuf> {
     }
 
     None
+}
+
+/// Find app.asar file recursively in the extracted directory
+/// Returns the path to app.asar if found
+fn find_app_asar(extract_dir: &Path) -> Result<PathBuf> {
+    // First check the standard location
+    let standard_path = extract_dir.join("resources").join("app.asar");
+    if standard_path.exists() {
+        return Ok(standard_path);
+    }
+
+    // Search recursively for app.asar
+    if let Some(entry) = WalkDir::new(extract_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name() == "app.asar")
+    {
+        let path = entry.path().to_path_buf();
+        info!("Found app.asar at non-standard location: {:?}", path);
+        return Ok(path);
+    }
+
+    // List what we found to help debug
+    debug!("Contents of extracted directory:");
+    for entry in WalkDir::new(extract_dir)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        debug!("  {:?}", entry.path());
+    }
+
+    anyhow::bail!(
+        "app.asar not found in {:?}. The installer structure may have changed.",
+        extract_dir
+    )
+}
+
+/// Extract nested 7z archives found in the extracted installer
+/// NSIS installers often contain nested archives like app-64.7z or app.7z
+fn extract_nested_archives(extract_dir: &Path) -> Result<()> {
+    let seven_zip = find_7z_executable();
+
+    // Find all .7z files in the extracted directory
+    let archives: Vec<PathBuf> = WalkDir::new(extract_dir)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|ext| ext == "7z" || ext == "nupkg")
+        })
+        .map(|e| e.path().to_path_buf())
+        .collect();
+
+    if archives.is_empty() {
+        debug!("No nested archives found");
+        return Ok(());
+    }
+
+    let executable = match &seven_zip {
+        Some(exe) => exe,
+        None => {
+            // If no nested archives need extraction, this is fine
+            // But if we found archives and can't extract them, that's a problem
+            warn!(
+                "Found {} nested archive(s) but 7z not available to extract them",
+                archives.len()
+            );
+            return Ok(());
+        }
+    };
+
+    for archive in archives {
+        info!("Extracting nested archive: {:?}", archive);
+
+        // Extract to the same directory as the archive
+        let output_dir = archive.parent().unwrap_or(extract_dir);
+
+        let result = Command::new(executable)
+            .args(["x", "-y", &format!("-o{}", output_dir.display())])
+            .arg(&archive)
+            .output();
+
+        match result {
+            Ok(output) => {
+                if output.status.success() {
+                    info!("Successfully extracted nested archive: {:?}", archive);
+                    // Remove the archive after extraction to save space
+                    let _ = fs::remove_file(&archive);
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    warn!("Failed to extract {:?}: {}", archive, stderr);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to run 7z on {:?}: {}", archive, e);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Try to extract using a specific 7z executable path
