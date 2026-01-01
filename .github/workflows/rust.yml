@@ -59,7 +59,7 @@ jobs:
         include:
           - os: windows-latest
             artifact_name: yandex-music-mod.exe
-            asset_name: yandex-music-mod-windows-x64.exe
+            asset_name: yandex-music-mod-windows-x64
           - os: ubuntu-latest
             artifact_name: yandex-music-mod
             asset_name: yandex-music-mod-linux-x64
@@ -121,9 +121,9 @@ jobs:
           Automated release from commit ${{ github.sha }}
 
           ## Downloads
-          - **Windows**: `yandex-music-mod-windows-x64.exe` - Portable executable, no installation required
-          - **Linux**: `yandex-music-mod-linux-x64` - Linux binary
-          - **macOS**: `yandex-music-mod-macos-x64` - macOS binary
+          - **Windows**: `yandex-music-mod.exe` - Portable executable, no installation required
+          - **Linux**: `yandex-music-mod` - Linux binary
+          - **macOS**: `yandex-music-mod` - macOS binary
 
           ## Usage
           ```bash
@@ -137,7 +137,7 @@ jobs:
           ./yandex-music-mod download
           ```
         files: |
-          artifacts/yandex-music-mod-windows-x64.exe/*
+          artifacts/yandex-music-mod-windows-x64/*
           artifacts/yandex-music-mod-linux-x64/*
           artifacts/yandex-music-mod-macos-x64/*
         draft: false
