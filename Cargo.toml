@@ -1,0 +1,61 @@
+[package]
+name = "yandex-music-mod"
+version = "0.1.0"
+edition = "2021"
+authors = ["Jhon-Crow"]
+description = "A fast Rust implementation of YandexMusicBetaMod - patches Yandex Music desktop app for premium features"
+license = "MIT"
+repository = "https://github.com/Jhon-Crow/YandexMusicBetaModeFastLP"
+keywords = ["yandex", "music", "patcher", "mod"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+# HTTP client
+reqwest = { version = "0.11", features = ["blocking", "json"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# JSON/YAML parsing
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# CLI interface
+clap = { version = "4", features = ["derive"] }
+
+# File system utilities
+walkdir = "2"
+tempfile = "3"
+zip = "0.6"
+
+# ASAR archive handling
+asar = "0.2"
+
+# Crypto for decryption (AES-CTR)
+aes = "0.8"
+ctr = "0.9"
+
+# Progress bar
+indicatif = { version = "0.17", features = ["rayon"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Regex for patching
+regex = "1"
+
+# SHA-512 for verification
+sha2 = "0.10"
+hex = "0.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
