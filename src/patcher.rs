@@ -126,30 +126,83 @@ fn update_progress(progress: Option<&ProgressBar>, pos: u64, msg: &str) {
     }
 }
 
-/// Extract the installer using 7z or a built-in extractor
-fn extract_installer(installer_path: &Path, output_dir: &Path) -> Result<()> {
-    // Try using 7z command if available
-    let result = Command::new("7z")
-        .args(["x", "-y", "-o"])
-        .arg(output_dir)
-        .arg(installer_path)
-        .output();
-
-    match result {
-        Ok(output) => {
-            if output.status.success() {
-                debug!("7z extraction successful");
-                return Ok(());
+/// Find 7-Zip executable on the system
+/// Checks common installation paths on Windows in addition to PATH lookup
+fn find_7z_executable() -> Option<PathBuf> {
+    // First try PATH lookup for common command names
+    for cmd in &["7z", "7zz", "7za"] {
+        if let Ok(output) = Command::new(cmd).arg("--help").output() {
+            if output.status.success() || !output.stdout.is_empty() {
+                debug!("Found {} in PATH", cmd);
+                return Some(PathBuf::from(cmd));
             }
-            warn!("7z failed: {}", String::from_utf8_lossy(&output.stderr));
-        }
-        Err(e) => {
-            warn!("7z not found, trying alternative methods: {}", e);
         }
     }
 
-    // Try using 7zz (7-Zip on some systems)
-    let result = Command::new("7zz")
+    // On Windows, check common installation paths
+    #[cfg(target_os = "windows")]
+    {
+        let common_paths = [
+            // Standard 7-Zip installation paths
+            r"C:\Program Files\7-Zip\7z.exe",
+            r"C:\Program Files (x86)\7-Zip\7z.exe",
+            // Chocolatey installation
+            r"C:\ProgramData\chocolatey\bin\7z.exe",
+            // Scoop installation (user-level)
+            // We'll check this dynamically below
+        ];
+
+        for path_str in &common_paths {
+            let path = PathBuf::from(path_str);
+            if path.exists() {
+                info!("Found 7-Zip at: {}", path.display());
+                return Some(path);
+            }
+        }
+
+        // Check Scoop installation path (user-level, varies by username)
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            let scoop_path = PathBuf::from(&userprofile)
+                .join("scoop")
+                .join("apps")
+                .join("7zip")
+                .join("current")
+                .join("7z.exe");
+            if scoop_path.exists() {
+                info!("Found 7-Zip via Scoop at: {}", scoop_path.display());
+                return Some(scoop_path);
+            }
+
+            // Also check scoop shims directory
+            let scoop_shim = PathBuf::from(&userprofile)
+                .join("scoop")
+                .join("shims")
+                .join("7z.exe");
+            if scoop_shim.exists() {
+                info!("Found 7-Zip shim at: {}", scoop_shim.display());
+                return Some(scoop_shim);
+            }
+        }
+
+        // Check PROGRAMFILES and PROGRAMFILES(X86) environment variables
+        // (handles non-standard Windows installations)
+        for env_var in &["PROGRAMFILES", "PROGRAMFILES(X86)", "ProgramW6432"] {
+            if let Ok(program_files) = std::env::var(env_var) {
+                let path = PathBuf::from(&program_files).join("7-Zip").join("7z.exe");
+                if path.exists() {
+                    info!("Found 7-Zip via {} at: {}", env_var, path.display());
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Try to extract using a specific 7z executable path
+fn try_7z_extract(executable: &Path, installer_path: &Path, output_dir: &Path) -> Result<()> {
+    let result = Command::new(executable)
         .args(["x", "-y", &format!("-o{}", output_dir.display())])
         .arg(installer_path)
         .output();
@@ -157,17 +210,38 @@ fn extract_installer(installer_path: &Path, output_dir: &Path) -> Result<()> {
     match result {
         Ok(output) => {
             if output.status.success() {
-                debug!("7zz extraction successful");
+                debug!("7z extraction successful using {:?}", executable);
                 return Ok(());
             }
-            warn!("7zz failed: {}", String::from_utf8_lossy(&output.stderr));
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            warn!(
+                "7z extraction failed:\nstderr: {}\nstdout: {}",
+                stderr, stdout
+            );
+            anyhow::bail!("7z extraction failed: {}", stderr);
         }
         Err(e) => {
-            warn!("7zz not found: {}", e);
+            anyhow::bail!("Failed to run 7z: {}", e);
         }
     }
+}
 
-    // Try using p7zip
+/// Extract the installer using 7z or a built-in extractor
+fn extract_installer(installer_path: &Path, output_dir: &Path) -> Result<()> {
+    // Try to find and use 7z
+    if let Some(executable) = find_7z_executable() {
+        match try_7z_extract(&executable, installer_path, output_dir) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                warn!("7z extraction failed with {:?}: {}", executable, e);
+            }
+        }
+    } else {
+        warn!("7z not found in PATH or common installation locations");
+    }
+
+    // Try using p7zip (Linux/macOS)
     let result = Command::new("p7zip")
         .args(["-d", "-k"])
         .arg(installer_path)
