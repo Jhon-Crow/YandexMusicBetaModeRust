@@ -80,10 +80,7 @@ async fn main() -> Result<()> {
             }
 
             let build = &builds[0];
-            info!(
-                "Found build: {} (version {})",
-                build.path, build.version
-            );
+            info!("Found build: {} (version {})", build.path, build.version);
 
             let pb = ProgressBar::new(100);
             pb.set_style(
@@ -108,10 +105,7 @@ async fn main() -> Result<()> {
             }
 
             let build = &builds[0];
-            info!(
-                "Found build: {} (version {})",
-                build.path, build.version
-            );
+            info!("Found build: {} (version {})", build.path, build.version);
 
             let output_path = format!("{}/{}.exe", output, build.version);
             std::fs::create_dir_all(&output)?;

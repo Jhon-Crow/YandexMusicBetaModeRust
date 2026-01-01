@@ -59,7 +59,8 @@ pub fn patch_package_json(content: &str) -> anyhow::Result<String> {
 
     // Update package metadata
     json["name"] = json!("YandexMusicMod");
-    json["author"] = json!("YandexMusicBetaModeFastLP [github.com/Jhon-Crow/YandexMusicBetaModeFastLP]");
+    json["author"] =
+        json!("YandexMusicBetaModeFastLP [github.com/Jhon-Crow/YandexMusicBetaModeFastLP]");
 
     // Update meta information
     if let Some(meta) = json.get_mut("meta") {
@@ -160,8 +161,14 @@ pub fn patch_create_window_js(content: &str, auto_devtools: bool) -> String {
         settings_reader,
         content
             .replace("config_js_1.config.app.enableDevTools", "true")
-            .replace("titleBarStyle: 'hidden'", "titleBarStyle: !enableSystemToolbar && 'hidden'")
-            .replace("titleBarStyle:'hidden'", "titleBarStyle: !enableSystemToolbar && 'hidden'")
+            .replace(
+                "titleBarStyle: 'hidden'",
+                "titleBarStyle: !enableSystemToolbar && 'hidden'"
+            )
+            .replace(
+                "titleBarStyle:'hidden'",
+                "titleBarStyle: !enableSystemToolbar && 'hidden'"
+            )
             .replace("minWidth: 768", "minWidth: 360")
             .replace("minHeight: 650", "minHeight: 550")
             .replace("show: false", "show: true")

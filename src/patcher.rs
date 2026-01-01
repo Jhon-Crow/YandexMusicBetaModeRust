@@ -50,7 +50,10 @@ pub async fn process_build(
     info!("Download complete");
 
     update_progress(progress, 20, "Extracting installer...");
-    info!("[2] Extracting build {} to {:?}", build.version, extract_dir);
+    info!(
+        "[2] Extracting build {} to {:?}",
+        build.version, extract_dir
+    );
 
     extract_installer(&build_binary_path, &extract_dir)?;
     info!("Extraction complete");
@@ -138,10 +141,7 @@ fn extract_installer(installer_path: &Path, output_dir: &Path) -> Result<()> {
                 debug!("7z extraction successful");
                 return Ok(());
             }
-            warn!(
-                "7z failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+            warn!("7z failed: {}", String::from_utf8_lossy(&output.stderr));
         }
         Err(e) => {
             warn!("7z not found, trying alternative methods: {}", e);
@@ -160,10 +160,7 @@ fn extract_installer(installer_path: &Path, output_dir: &Path) -> Result<()> {
                 debug!("7zz extraction successful");
                 return Ok(());
             }
-            warn!(
-                "7zz failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+            warn!("7zz failed: {}", String::from_utf8_lossy(&output.stderr));
         }
         Err(e) => {
             warn!("7zz not found: {}", e);
