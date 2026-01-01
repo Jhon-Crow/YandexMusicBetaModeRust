@@ -51,10 +51,23 @@ jobs:
       run: cargo clippy -- -D warnings
       if: matrix.os == 'ubuntu-latest'
 
-  release:
+  # Build portable executables for all platforms on every push/PR
+  build-portable:
     needs: build
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: yandex-music-mod.exe
+            asset_name: yandex-music-mod-windows-x64.exe
+          - os: ubuntu-latest
+            artifact_name: yandex-music-mod
+            asset_name: yandex-music-mod-linux-x64
+          - os: macos-latest
+            artifact_name: yandex-music-mod
+            asset_name: yandex-music-mod-macos-x64
+
+    runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v4
@@ -62,11 +75,72 @@ jobs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-action@stable
 
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-release-
+
     - name: Build release
       run: cargo build --release
 
-    - name: Upload artifact
+    - name: Upload portable executable
       uses: actions/upload-artifact@v4
       with:
-        name: yandex-music-mod-linux
-        path: target/release/yandex-music-mod
+        name: ${{ matrix.asset_name }}
+        path: target/release/${{ matrix.artifact_name }}
+
+  # Create GitHub Release with all platform binaries when pushing to main
+  release:
+    needs: build-portable
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Display downloaded files
+      run: ls -R artifacts
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ github.run_number }}
+        name: Release v${{ github.run_number }}
+        body: |
+          Automated release from commit ${{ github.sha }}
+
+          ## Downloads
+          - **Windows**: `yandex-music-mod-windows-x64.exe` - Portable executable, no installation required
+          - **Linux**: `yandex-music-mod-linux-x64` - Linux binary
+          - **macOS**: `yandex-music-mod-macos-x64` - macOS binary
+
+          ## Usage
+          ```bash
+          # Show info about latest build
+          ./yandex-music-mod info
+
+          # Patch latest version
+          ./yandex-music-mod patch
+
+          # Download only (no patching)
+          ./yandex-music-mod download
+          ```
+        files: |
+          artifacts/yandex-music-mod-windows-x64.exe/*
+          artifacts/yandex-music-mod-linux-x64/*
+          artifacts/yandex-music-mod-macos-x64/*
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
