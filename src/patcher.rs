@@ -58,19 +58,23 @@ pub async fn process_build(
     extract_installer(&build_binary_path, &extract_dir)?;
     info!("Extraction complete");
 
+    update_progress(progress, 30, "Extracting nested archives...");
+    info!("[3] Extracting nested archives (if any)");
+
+    // NSIS installers often have nested 7z archives (e.g., app-64.7z)
+    extract_nested_archives(&extract_dir)?;
+    info!("Nested archive extraction complete");
+
     update_progress(progress, 35, "Locating and extracting app.asar...");
-    info!("[3] Finding and extracting app.asar");
+    info!("[4] Finding and extracting app.asar");
 
-    let app_asar_path = extract_dir.join("resources").join("app.asar");
-    let app_icon_path = extract_dir
-        .join("resources")
-        .join("assets")
-        .join("icon.ico");
-
-    if !app_asar_path.exists() {
-        anyhow::bail!("app.asar not found at {:?}", app_asar_path);
-    }
+    // Search for app.asar recursively since installer structure varies
+    let app_asar_path = find_app_asar(&extract_dir)?;
     info!("Found app.asar at {:?}", app_asar_path);
+
+    // Try to find icon in same resources folder as app.asar
+    let resources_dir = app_asar_path.parent().unwrap_or(&extract_dir);
+    let app_icon_path = resources_dir.join("assets").join("icon.ico");
 
     // Copy icon if it exists
     if app_icon_path.exists() {
@@ -83,31 +87,31 @@ pub async fn process_build(
     info!("Extracted app.asar");
 
     update_progress(progress, 45, "Cleaning up temp files...");
-    info!("[4] Cleaning up temporary files");
+    info!("[5] Cleaning up temporary files");
 
     fs::remove_dir_all(&temp_dir)?;
     info!("Cleanup complete");
 
     update_progress(progress, 50, "Copying sources...");
-    info!("[5] Copying sources before modding");
+    info!("[6] Copying sources before modding");
 
     copy_dir_all(&build_source_dir, &build_modded_dir)?;
     info!("Copy complete");
 
     update_progress(progress, 55, "Applying patches...");
-    info!("[6] Patching application");
+    info!("[7] Patching application");
 
     apply_patches(&build_modded_dir, auto_devtools)?;
     info!("Patching complete");
 
     update_progress(progress, 80, "Creating mod files...");
-    info!("[7] Creating mod files");
+    info!("[8] Creating mod files");
 
     create_mod_files(&build_modded_dir)?;
     info!("Mod files created");
 
     update_progress(progress, 90, "Injecting mod into HTML...");
-    info!("[8] Injecting mod into HTML files");
+    info!("[9] Injecting mod into HTML files");
 
     inject_mod_into_html(&build_modded_dir)?;
     info!("HTML injection complete");
@@ -126,30 +130,186 @@ fn update_progress(progress: Option<&ProgressBar>, pos: u64, msg: &str) {
     }
 }
 
-/// Extract the installer using 7z or a built-in extractor
-fn extract_installer(installer_path: &Path, output_dir: &Path) -> Result<()> {
-    // Try using 7z command if available
-    let result = Command::new("7z")
-        .args(["x", "-y", "-o"])
-        .arg(output_dir)
-        .arg(installer_path)
-        .output();
-
-    match result {
-        Ok(output) => {
-            if output.status.success() {
-                debug!("7z extraction successful");
-                return Ok(());
+/// Find 7-Zip executable on the system
+/// Checks common installation paths on Windows in addition to PATH lookup
+fn find_7z_executable() -> Option<PathBuf> {
+    // First try PATH lookup for common command names
+    for cmd in &["7z", "7zz", "7za"] {
+        if let Ok(output) = Command::new(cmd).arg("--help").output() {
+            if output.status.success() || !output.stdout.is_empty() {
+                debug!("Found {} in PATH", cmd);
+                return Some(PathBuf::from(cmd));
             }
-            warn!("7z failed: {}", String::from_utf8_lossy(&output.stderr));
-        }
-        Err(e) => {
-            warn!("7z not found, trying alternative methods: {}", e);
         }
     }
 
-    // Try using 7zz (7-Zip on some systems)
-    let result = Command::new("7zz")
+    // On Windows, check common installation paths
+    #[cfg(target_os = "windows")]
+    {
+        let common_paths = [
+            // Standard 7-Zip installation paths
+            r"C:\Program Files\7-Zip\7z.exe",
+            r"C:\Program Files (x86)\7-Zip\7z.exe",
+            // Chocolatey installation
+            r"C:\ProgramData\chocolatey\bin\7z.exe",
+            // Scoop installation (user-level)
+            // We'll check this dynamically below
+        ];
+
+        for path_str in &common_paths {
+            let path = PathBuf::from(path_str);
+            if path.exists() {
+                info!("Found 7-Zip at: {}", path.display());
+                return Some(path);
+            }
+        }
+
+        // Check Scoop installation path (user-level, varies by username)
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            let scoop_path = PathBuf::from(&userprofile)
+                .join("scoop")
+                .join("apps")
+                .join("7zip")
+                .join("current")
+                .join("7z.exe");
+            if scoop_path.exists() {
+                info!("Found 7-Zip via Scoop at: {}", scoop_path.display());
+                return Some(scoop_path);
+            }
+
+            // Also check scoop shims directory
+            let scoop_shim = PathBuf::from(&userprofile)
+                .join("scoop")
+                .join("shims")
+                .join("7z.exe");
+            if scoop_shim.exists() {
+                info!("Found 7-Zip shim at: {}", scoop_shim.display());
+                return Some(scoop_shim);
+            }
+        }
+
+        // Check PROGRAMFILES and PROGRAMFILES(X86) environment variables
+        // (handles non-standard Windows installations)
+        for env_var in &["PROGRAMFILES", "PROGRAMFILES(X86)", "ProgramW6432"] {
+            if let Ok(program_files) = std::env::var(env_var) {
+                let path = PathBuf::from(&program_files).join("7-Zip").join("7z.exe");
+                if path.exists() {
+                    info!("Found 7-Zip via {} at: {}", env_var, path.display());
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Find app.asar file recursively in the extracted directory
+/// Returns the path to app.asar if found
+fn find_app_asar(extract_dir: &Path) -> Result<PathBuf> {
+    // First check the standard location
+    let standard_path = extract_dir.join("resources").join("app.asar");
+    if standard_path.exists() {
+        return Ok(standard_path);
+    }
+
+    // Search recursively for app.asar
+    if let Some(entry) = WalkDir::new(extract_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name() == "app.asar")
+    {
+        let path = entry.path().to_path_buf();
+        info!("Found app.asar at non-standard location: {:?}", path);
+        return Ok(path);
+    }
+
+    // List what we found to help debug
+    debug!("Contents of extracted directory:");
+    for entry in WalkDir::new(extract_dir)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        debug!("  {:?}", entry.path());
+    }
+
+    anyhow::bail!(
+        "app.asar not found in {:?}. The installer structure may have changed.",
+        extract_dir
+    )
+}
+
+/// Extract nested 7z archives found in the extracted installer
+/// NSIS installers often contain nested archives like app-64.7z or app.7z
+fn extract_nested_archives(extract_dir: &Path) -> Result<()> {
+    let seven_zip = find_7z_executable();
+
+    // Find all .7z files in the extracted directory
+    let archives: Vec<PathBuf> = WalkDir::new(extract_dir)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|ext| ext == "7z" || ext == "nupkg")
+        })
+        .map(|e| e.path().to_path_buf())
+        .collect();
+
+    if archives.is_empty() {
+        debug!("No nested archives found");
+        return Ok(());
+    }
+
+    let executable = match &seven_zip {
+        Some(exe) => exe,
+        None => {
+            // If no nested archives need extraction, this is fine
+            // But if we found archives and can't extract them, that's a problem
+            warn!(
+                "Found {} nested archive(s) but 7z not available to extract them",
+                archives.len()
+            );
+            return Ok(());
+        }
+    };
+
+    for archive in archives {
+        info!("Extracting nested archive: {:?}", archive);
+
+        // Extract to the same directory as the archive
+        let output_dir = archive.parent().unwrap_or(extract_dir);
+
+        let result = Command::new(executable)
+            .args(["x", "-y", &format!("-o{}", output_dir.display())])
+            .arg(&archive)
+            .output();
+
+        match result {
+            Ok(output) => {
+                if output.status.success() {
+                    info!("Successfully extracted nested archive: {:?}", archive);
+                    // Remove the archive after extraction to save space
+                    let _ = fs::remove_file(&archive);
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    warn!("Failed to extract {:?}: {}", archive, stderr);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to run 7z on {:?}: {}", archive, e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Try to extract using a specific 7z executable path
+fn try_7z_extract(executable: &Path, installer_path: &Path, output_dir: &Path) -> Result<()> {
+    let result = Command::new(executable)
         .args(["x", "-y", &format!("-o{}", output_dir.display())])
         .arg(installer_path)
         .output();
@@ -157,17 +317,38 @@ fn extract_installer(installer_path: &Path, output_dir: &Path) -> Result<()> {
     match result {
         Ok(output) => {
             if output.status.success() {
-                debug!("7zz extraction successful");
+                debug!("7z extraction successful using {:?}", executable);
                 return Ok(());
             }
-            warn!("7zz failed: {}", String::from_utf8_lossy(&output.stderr));
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            warn!(
+                "7z extraction failed:\nstderr: {}\nstdout: {}",
+                stderr, stdout
+            );
+            anyhow::bail!("7z extraction failed: {}", stderr);
         }
         Err(e) => {
-            warn!("7zz not found: {}", e);
+            anyhow::bail!("Failed to run 7z: {}", e);
         }
     }
+}
 
-    // Try using p7zip
+/// Extract the installer using 7z or a built-in extractor
+fn extract_installer(installer_path: &Path, output_dir: &Path) -> Result<()> {
+    // Try to find and use 7z
+    if let Some(executable) = find_7z_executable() {
+        match try_7z_extract(&executable, installer_path, output_dir) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                warn!("7z extraction failed with {:?}: {}", executable, e);
+            }
+        }
+    } else {
+        warn!("7z not found in PATH or common installation locations");
+    }
+
+    // Try using p7zip (Linux/macOS)
     let result = Command::new("p7zip")
         .args(["-d", "-k"])
         .arg(installer_path)

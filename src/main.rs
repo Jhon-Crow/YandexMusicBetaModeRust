@@ -11,8 +11,38 @@ mod patches;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
+use std::io::{self, Write};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
+
+/// Wait for user to press Enter before exiting.
+/// This is useful when the program is run by double-clicking the exe on Windows,
+/// so users can see the output before the console window closes.
+fn wait_for_enter() {
+    print!("\nPress Enter to exit...");
+    let _ = io::stdout().flush();
+    let _ = io::stdin().read_line(&mut String::new());
+}
+
+/// Check if we're running in an interactive console that will stay open,
+/// or if we were likely launched by double-clicking the exe.
+fn should_wait_before_exit() -> bool {
+    // On Windows, check if we have a console attached that we own
+    #[cfg(target_os = "windows")]
+    {
+        // If there's no TERM, SHELL, or other terminal indicators,
+        // and we're on Windows, we're likely double-clicked
+        std::env::var("TERM").is_err()
+            && std::env::var("SHELL").is_err()
+            && std::env::var("WT_SESSION").is_err()
+            && std::env::var("PROMPT").is_err()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "yandex-music-mod")]
@@ -21,7 +51,7 @@ use tracing_subscriber::FmtSubscriber;
 #[command(about = "A fast Rust patcher for Yandex Music desktop app", long_about = None)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 
     /// Enable verbose logging
     #[arg(short, long, global = true)]
@@ -53,7 +83,27 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    let wait_on_exit = should_wait_before_exit();
+
+    match run().await {
+        Ok(_) => {
+            if wait_on_exit {
+                println!("\nOperation completed successfully!");
+                wait_for_enter();
+            }
+        }
+        Err(e) => {
+            eprintln!("\nError: {:#}", e);
+            if wait_on_exit {
+                wait_for_enter();
+            }
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logging
@@ -66,7 +116,16 @@ async fn main() -> Result<()> {
     let subscriber = FmtSubscriber::builder().with_max_level(level).finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    match cli.command {
+    // Default to Patch command if no subcommand is provided
+    let command = cli.command.unwrap_or_else(|| {
+        println!("No command specified, defaulting to 'patch' command...\n");
+        Commands::Patch {
+            output: ".versions".to_string(),
+            auto_devtools: false,
+        }
+    });
+
+    match command {
         Commands::Patch {
             output,
             auto_devtools,
