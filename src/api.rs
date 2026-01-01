@@ -40,6 +40,7 @@ struct UpdateInfo {
 
 /// Processed build information
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AppBuild {
     pub path: String,
     pub hash: String,

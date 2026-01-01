@@ -173,14 +173,11 @@ fn extract_installer(installer_path: &Path, output_dir: &Path) -> Result<()> {
         .arg(installer_path)
         .output();
 
-    match result {
-        Ok(output) => {
-            if output.status.success() {
-                debug!("p7zip extraction successful");
-                return Ok(());
-            }
+    if let Ok(output) = result {
+        if output.status.success() {
+            debug!("p7zip extraction successful");
+            return Ok(());
         }
-        Err(_) => {}
     }
 
     // If all else fails, try using the zip crate (may work for some installers)
@@ -428,7 +425,7 @@ fn inject_mod_into_html(modded_dir: &Path) -> Result<()> {
     for entry in WalkDir::new(&app_dir)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "html"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "html"))
     {
         let path = entry.path();
         info!("Patching HTML: {:?}", path);

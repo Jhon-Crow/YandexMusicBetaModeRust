@@ -3,6 +3,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum PatcherError {
     #[error("Failed to download build: {0}")]
     DownloadError(String),
